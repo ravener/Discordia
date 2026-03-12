@@ -95,6 +95,30 @@ local function attachFiles(payload, files)
 	return concat(ret, '\r\n'), boundary
 end
 
+local function generateStickerBoundary(sticker, boundary)
+	boundary = boundary or tostring(random(0, 9))
+	if sticker[2]:find(boundary, 1, true) then
+		return generateStickerBoundary(sticker, boundary .. random(0, 9))
+	end
+	return boundary
+end
+
+local function attachSticker(payload, sticker)
+	local boundary = generateStickerBoundary(sticker)
+	local ret = {}
+	for k, v in pairs(payload) do
+		insert(ret, '--' .. boundary)
+		insert(ret, f('Content-Disposition:form-data;name=%q\r\n', k))
+		insert(ret, v)
+	end
+	insert(ret, '--' .. boundary)
+	insert(ret, f('Content-Disposition:form-data;name="file";filename=%q', sticker[1]))
+	insert(ret, 'Content-Type:image/png\r\n')
+	insert(ret, sticker[2])
+	insert(ret, '--' .. boundary .. '--')
+	return concat(ret, '\r\n'), boundary
+end
+
 local mutexMeta = {
 	__mode = 'v',
 	__index = function(self, k)
@@ -123,7 +147,7 @@ function API:authenticate(token)
 	return self:getCurrentUser()
 end
 
-function API:request(method, endpoint, payload, query, files)
+function API:request(method, endpoint, payload, query, files, sticker)
 
 	local _, main = running()
 	if main then
@@ -153,12 +177,17 @@ function API:request(method, endpoint, payload, query, files)
 	end
 
 	if payloadRequired[method] then
+		if sticker then
+			local boundary
+			payload, boundary = attachSticker(payload, sticker)
+			insert(req, {'Content-Type', MULTIPART .. boundary})
+		elseif files then
 		payload = payload and encode(payload) or '{}'
-		if files and next(files) then
 			local boundary
 			payload, boundary = attachFiles(payload, files)
 			insert(req, {'Content-Type', MULTIPART .. boundary})
 		else
+			payload = payload and encode(payload) or '{}'
 			insert(req, {'Content-Type', JSON})
 		end
 		insert(req, {'Content-Length', #payload})
@@ -405,9 +434,9 @@ function API:deleteGuildEmoji(guild_id, emoji_id) -- Emoji:delete
 	return self:request("DELETE", endpoint)
 end
 
-function API:createGuildSticker(guild_id, payload) -- Guild:createSticker
+function API:createGuildSticker(guild_id, payload, sticker) -- Guild:createSticker
 	local endpoint = f(endpoints.GUILD_STICKERS, guild_id)
-	return self:request("POST", endpoint, payload, nil, {{ "sticker.png", payload.image}})
+	return self:request("POST", endpoint, payload, nil, nil, sticker)
 end
 
 function API:getGuildStickers(guild_id) -- not exposed, use cache
@@ -485,9 +514,9 @@ function API:modifyGuildMember(guild_id, user_id, payload) -- various Member met
 	return self:request("PATCH", endpoint, payload)
 end
 
-function API:modifyCurrentUsersNick(guild_id, payload) -- Member:setNickname
-	local endpoint = f(endpoints.GUILD_MEMBER_ME_NICK, guild_id)
-	return self:request("PATCH", endpoint, payload)
+function API:modifyCurrentMember(guild_id, payload) -- Member:setNickname, Guild:setProfile
+    local endpoint = f(endpoints.GUILD_MEMBER_ME, guild_id)
+    return self:request("PATCH", endpoint, payload)
 end
 
 function API:addGuildMemberRole(guild_id, user_id, role_id, payload) -- Member:addrole
